@@ -1,0 +1,772 @@
+        <script th:if="${name} == *{owner}">
+
+
+            //Media player
+            var jukebox;
+            var player;
+
+            $.get("/api/jukeboxes/" + jukeboxid, function (data) {
+                jukebox = data;
+                updateComingNextList();
+                setPlayerInfo();
+            });
+
+            // youtube init
+            var tag = document.createElement('script');
+
+            tag.src = "https://www.youtube.com/iframe_api";
+            var firstScriptTag = document.getElementsByTagName('script')[0];
+            firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+            function onYouTubeIframeAPIReady() {
+
+                if (jukebox.currentlyPlaying != null) {
+                    player = new YT.Player('player', {
+                        height: '1',
+                        width: '1',
+                        videoId: jukebox.currentlyPlaying.youtubeId,
+                        events: {
+                            'onStateChange': onPlayerStateChange,
+                            'onError': onPlayerError,
+                            'onReady': function (event) {
+                            }
+                        }
+                    });
+                } else {
+                    player = new YT.Player('player', {
+                        height: '1',
+                        width: '1',
+                        videoId: 'M7lc1UVf-VE',
+                        events: {
+                            'onStateChange': onPlayerStateChange,
+                            'onError': onPlayerError,
+                            'onReady': function (event) {
+                                setTime();
+                            }
+                        }
+                    });
+                }
+            }
+            // !youtube init
+
+            var songTitle = $("#song-title");
+            var songDuration = $("#song-duration");
+            var songImage = $("#song-image");
+            var playButton = $("#play-button");
+            var volumeButton = $("#volume-button");
+
+            var isPlaying = false;
+            var started = false;
+            var isSeeking = false;
+
+
+            var slider = $("#slider").slider({
+                range: "min",
+                value: 0,
+                min: 0,
+                max: 100,
+                stop: function (event, ui) {
+                    if (started) {
+                        player.seekTo(player.getDuration() * (ui.value / 100.0));
+                    }
+                    isSeeking = false;
+                    setTime();
+                    setTimeout(setTime, 100);
+                },
+                start: function (event, ui) {
+                    isSeeking = true;
+                }
+            });
+
+            function play() {
+                if (!started) {
+                    $.get("/api/jukeboxes/" + jukeboxid + "/start", function (data) {
+                        jukebox = data;
+                        updateInfo();
+                    });
+                } else {
+                    if (isPlaying) {
+                        player.pauseVideo();
+                        isPlaying = false;
+                    } else {
+                        player.playVideo();
+                        isPlaying = true;
+                    }
+
+                }
+            }
+
+            function changePlayButton(playing) {
+                if (playing) {
+                    playButton.removeClass("icon-play4");
+                    playButton.addClass("icon-pause2");
+                } else {
+                    playButton.removeClass("icon-pause2");
+                    playButton.addClass("icon-play4");
+                }
+            }
+
+            function stop() {
+                $.get("/api/jukeboxes/" + jukeboxid + "/stop", function (data, status) {
+                    player.stopVideo();
+                    songTitle.text("--");
+                    songImage.attr("src", "");
+                    isPlaying = false;
+                    started = false;
+                    songDuration.text('00:00/00:00');
+                });
+            }
+
+            function skip() {
+                if (started) {
+                    $.get("/api/jukeboxes/" + jukeboxid + "/next", function (data, status) {
+                        jukebox = data;
+                        updateInfo();
+                    });
+                } else {
+                    play();
+                }
+            }
+
+            function setPlayerInfo() {
+                if (jukebox.currentlyPlaying != null) {
+                    songTitle.text(jukebox.currentlyPlaying.title.asTitle());
+                    songImage.attr("src", jukebox.currentlyPlaying.thumbnails.default.url);
+                }
+            }
+            function updateInfo() {
+                setPlayerInfo();
+                started = true;
+                if (player != null) {
+                    player.loadVideoById(jukebox.currentlyPlaying.youtubeId, 0, 'small');
+                    player.playVideo();
+                    isPlaying = true;
+                }
+                setTime();
+            }
+
+            function onPlayerStateChange(event) {
+                if (event.data == YT.PlayerState.PAUSED || event.data == -1) {
+                    changePlayButton(false);
+                }
+                if (event.data == YT.PlayerState.PLAYING) {
+                    changePlayButton(true);
+                }
+                if (event.data == YT.PlayerState.ENDED) {
+                    changePlayButton(false);
+                    skip();
+                }
+            }
+
+            function onPlayerError(event) {
+                var message;
+                switch (event.data) {
+                    case 2:
+                        message = "The request contains an invalid parameter value. For example, this error occurs if you specify a video ID that does not have 11 characters, or if the video ID contains invalid characters, such as exclamation points or asterisks.";
+                        break;
+                    case 5:
+                        message = "The requested content cannot be played in an HTML5 player or another error related to the HTML5 player has occurred.";
+                        break;
+                    case 100:
+                        $.jGrowl('Song "' + jukebox.currentlyPlaying.title + '" has been removed from youtube or has been made private. You should remove it from your playlist.', {
+                            header: 'Song not found!',
+                            theme: 'bg-warning'
+                        });
+                        message = "The video requested was not found. This error occurs when a video has been removed (for any reason) or has been marked as private.";
+                        break;
+                    case 101:
+                        message = "The owner of the requested video does not allow it to be played in embedded players.";
+                        break;
+                    case 150:
+                        message = "The owner of the requested video does not allow it to be played in embedded players.";
+                        break;
+                    default:
+                        message = "Unknown player error has occured";
+                        break;
+                }
+                if (jukebox != null && jukebox.currentlyPlaying != null) {
+                    console.log("Error(" + event.data + "): " + jukebox.currentlyPlaying.title + " : " + message);
+                } else {
+                    console.log(message);
+                }
+                skip();
+            }
+
+            function updateDuration() {
+                try {
+                    setTime();
+                } catch (e) {
+                }
+                setTimeout(updateDuration, 1000);
+            }
+            updateDuration();
+
+            function setTime() {
+                var time = 0;
+                var duration = player.getDuration();
+                var currentTime = player.getCurrentTime();
+                if (duration != 0) {
+                    time = (currentTime * 100) / duration;
+                    songDuration.text(toTime(currentTime) + '/' + toTime(duration));
+                }
+                if (!isSeeking) {
+                    slider.slider('value', time);
+                }
+            }
+
+            $('#volume-main').tooltip({
+                title: 'Volume tooltip',
+                trigger: 'click'
+            }).on('shown.bs.tooltip', setupVolume);
+
+            function setupVolume() {
+                var volume = 100;
+                if (started) {
+                    volume = player.getVolume();
+                }
+                $("#volume").slider({
+                    range: "min",
+                    value: volume,
+                    min: 0,
+                    max: 100,
+                    slide: function (event, ui) {
+                        player.setVolume(ui.value);
+                        var img = Math.ceil(ui.value / 34.0);
+                        volumeButton.removeClass();
+                        switch (img) {
+                            case 0:
+                                volumeButton.addClass('icon-volume-mute');
+                                break;
+                            case 1:
+                                volumeButton.addClass('icon-volume-low');
+                                break;
+                            case 2:
+                                volumeButton.addClass('icon-volume-medium');
+                                break;
+                            case 3:
+                                volumeButton.addClass('icon-volume-high');
+                                break;
+                            default:
+                                volumeButton.addClass('icon-volume-high');
+                                break;
+                        }
+                    }
+                });
+            }
+
+            function toTime(number) {
+                if (number == null) {
+                    return "00:00";
+                }
+                var minutes = Math.floor(number / 60);
+                var seconds = Math.floor(number - (minutes * 60));
+
+                if (minutes < 10) {
+                    minutes = "0" + minutes;
+                }
+                if (seconds < 10) {
+                    seconds = "0" + seconds;
+                }
+                return minutes + ':' + seconds;
+            }
+
+        </script>
+
+        <script>
+
+            var startHandlers = [];
+            var updateHandlers = [];
+            var endHandlers = [];
+            var requestUpdateHandlers = [];
+            var stompClient;
+            var comingNextList = $("#coming-next");
+            var requestList = $("#requests");
+            var jukebox;
+            var requests;
+
+            function subscribeStart(fn) {
+                startHandlers.push(fn);
+            }
+
+            function subscriptUpdate(fn) {
+                updateHandlers.push(fn);
+            }
+
+            function subscribeEnd(fn) {
+                endHandlers.push(fn);
+            }
+
+            function subscribeRequestUpdate(fn) {
+                requestUpdateHandlers.push(fn);
+            }
+
+            function unsubscribeStart(fn) {
+                startHandlers = startHandlers.filter(
+                        function (item) {
+                            if (item !== fn) {
+                                return item;
+                            }
+                        }
+                );
+            }
+
+            function unsubscriptUpdate(fn) {
+                updateHandlers = updateHandlers.filter(
+                        function (item) {
+                            if (item !== fn) {
+                                return item;
+                            }
+                        }
+                );
+            }
+
+            function unsubscribeEnd(fn) {
+                endHandlers = endHandlers.filter(
+                        function (item) {
+                            if (item !== fn) {
+                                return item;
+                            }
+                        }
+                );
+            }
+
+            function unsubscribeRequestUpdate(fn) {
+                requestUpdateHandlers = requestUpdateHandlers.filter(
+                        function (item) {
+                            if (item !== fn) {
+                                return item;
+                            }
+                        }
+                );
+            }
+
+            function connect() {
+                var socket = new SockJS('/api/live/sockjs');
+                stompClient = Stomp.over(socket);
+                stompClient.debug = null;
+                stompClient.connect({}, stompConnectionSuccess, stompConnectionFailure);
+            }
+
+            function stompConnectionSuccess(frame) {
+                stompClient.subscribe('/api/live/jukebox/' + jukeboxid + '/started', function (msg) {
+                    jukebox = JSON.parse(msg.body);
+                    startHandlers.forEach(function (entry) {
+                        entry.call();
+                    });
+                });
+                stompClient.subscribe('/api/live/jukebox/' + jukeboxid + '/songupdate', function (msg) {
+                    jukebox = JSON.parse(msg.body);
+                    updateHandlers.forEach(function (entry) {
+                        entry.call();
+                    });
+                });
+                stompClient.subscribe('/api/live/jukebox/' + jukeboxid + '/ended', function (msg) {
+                    comingNextList.empty();
+                    endHandlers.forEach(function (entry) {
+                        entry.call();
+                    });
+                });
+                stompClient.subscribe('/api/live/jukebox/' + jukeboxid + '/requestsupdate', function (msg) {
+                    requests = JSON.parse(msg.body);
+                    requestUpdateHandlers.forEach(function (entry) {
+                        entry.call();
+                    });
+                });
+            }
+
+            function stompConnectionFailure(error) {
+                $.jGrowl('Reconnecting in 10 seconds', {
+                    header: 'Connection lost!',
+                    theme: 'bg-danger'
+                });
+                setTimeout(connect, 10000);
+                console.log('STOMP: Reconecting in 10 seconds');
+            }
+
+            connect();
+            subscribeStart(updateComingNextList);
+            subscriptUpdate(updateComingNextList);
+
+            function updateComingNextList() {
+                comingNextList.empty();
+                if (jukebox.comingNext != null) {
+                    jukebox.comingNext.forEach(function (entry) {
+                        comingNextList.append(getMediaHtml(entry));
+                    });
+                }
+            }
+
+
+            function updateRequestList() {
+                requestList.empty();
+                if (requests != null && requests.length > 0) {
+                    requests.forEach(function (entry) {
+                        requestList.append(getRequestMediaHtml(entry));
+                    });
+                } else {
+                    requestList.append("<div align='center' class='text-muted'>" + requestslist.empty + "</div>")
+                }
+            }
+            subscribeRequestUpdate(updateRequestList);
+            $.get("/api/jukeboxes/" + jukeboxid + "/requests", function (data) {
+                requests = data;
+                updateRequestList();
+            });
+
+            function getRequestMediaHtml(item) {
+                var controls = "";
+                if (owner) {
+                    controls = '<li><a onclick="removeRequest(\'' + item.id + '\')">' + button.remove + '</a></li>';
+                }
+
+                var controls2 = "";
+                if (authenticated) {
+                    var onclick1 = '';
+                    var onclick2 = '';
+                    if (!item.upvoted) {
+                        onclick1 = 'upvoteRequest(\'' + item.id + '\')';
+                    }
+                    if (!item.skipvoted) {
+                        onclick2 = 'skipvoteRequest(\'' + item.id + '\')';
+                    }
+                    controls2 = '<li>' + item.upvotes + ' <a onclick="' + onclick1 + '"><i class="icon-arrow-up22 ' + ((item.upvoted) ? '' : 'text-success') + '"></i></a>' +
+                            '<a onclick="' + onclick2 + '"><i class="icon-arrow-down22 ' + ((item.skipvoted) ? '' : 'text-danger') + '"></i></a></li>';
+                }
+
+                return '<div class="media">' +
+                        '<div class="media-left"><img src="' + item.thumbnails.default.url + '" class="img-circle" alt=""></div>' +
+                        ' <div class="media-body">' +
+                        ' <h6 class="media-heading">' + item.title.asTitle() + '<span class="media-annotation pull-right">' + formatTimestamp(item.createdAt) + '</span> </h6>' +
+                        'Requested by: ' + item.requestedBy +
+                        '<ul class="list-inline mt-5 pull-right"> ' + controls + controls2 + '</ul> </div> </div>';
+            }
+
+            function removeRequest(id) {
+                $.get("/api/jukeboxes/" + jukeboxid + "/requests/remove?id=" + id, function (data) {
+                });
+            }
+
+            function upvoteRequest(id) {
+                $.get("/api/jukeboxes/" + jukeboxid + "/requests/upvote?id=" + id, function (data) {
+                });
+            }
+
+            function skipvoteRequest(id) {
+                $.get("/api/jukeboxes/" + jukeboxid + "/requests/skipvote?id=" + id, function (data) {
+                });
+            }
+
+            function getMediaHtml(item) {
+                var controls = "";
+                if (owner) {
+                    controls = "<ul class='list-inline mt-5'>" +
+                            "<li>" +
+                            "<a onclick='moveUp(\"" + item.youtubeId + "\")'><i class='icon-arrow-up22 text-primary'></i></a>" +
+                            "<a onclick='moveDown(\"" + item.youtubeId + "\")'><i class='icon-arrow-down22 text-primary'></i></a>" +
+                            "<a onclick='removeFromComingnext(\"" + item.youtubeId + "\")'><i class='icon-x text-danger'></i></a>" +
+                            "</ul>"
+                }
+
+                return '<li class="media">' +
+                        '<div class="media-body">' +
+                        '<h6 class="media-heading">' + item.title.asTitle() + '</h6>' + controls +
+                        '</div>' +
+                        '<div class="media-right">' +
+                        '<img src="' + item.thumbnails.default.url + '" class="img-circle" alt="">' +
+                        '</div>' +
+                        '</li>';
+            }
+
+            function moveUp(id) {
+                $.get("/api/jukeboxes/" + jukeboxid + "/comingnext/moveup?id=" + id, function (response) {
+                });
+            }
+
+            function moveDown(id) {
+                $.get("/api/jukeboxes/" + jukeboxid + "/comingnext/movedown?id=" + id, function (response) {
+                });
+            }
+
+            function removeFromComingnext(id) {
+                $.get("/api/jukeboxes/" + jukeboxid + "/comingnext/remove?id=" + id, function (response) {
+                });
+            }
+        </script>
+
+        <script th:if="${name} != *{owner}">
+
+            var playingTitle = $("#playing-title");
+            var playingImage = $("#playing-image");
+
+            subscribeStart(updateCurrentlyPlaying);
+            subscriptUpdate(updateCurrentlyPlaying);
+
+            $.get("/api/jukeboxes/" + jukeboxid, function (jb) {
+                jukebox = jb;
+                updateCurrentlyPlaying();
+                updateComingNextList();
+            });
+
+            function updateCurrentlyPlaying() {
+                if (jukebox.currentlyPlaying != null) {
+                    playingTitle.text(jukebox.currentlyPlaying.title.asTitle());
+                    playingImage.attr("src", jukebox.currentlyPlaying.thumbnails.default.url);
+                } else {
+                    playingTitle.text('--');
+                    playingImage.attr("src", '');
+                }
+            }
+
+        </script>
+
+        <!--Search-->
+        <script>
+            var searchInput = $("#search-input");
+            var searchResults = $("#search-results");
+
+            searchInput.keypress(function (event) {
+                if (event.which == 13) {
+                    search();
+                }
+            });
+
+            function search() {
+                var q = encodeURI(searchInput.val().replace(/[ ]+/gi, "+"));
+                searchResults.empty();
+                $.get("/api/youtube/searchmusic?q=" + q, function (results) {
+                    if (results.items.length != null) {
+                        searchResults.addClass("well");
+                        results.items.forEach(function (entry) {
+                            var func = 'request';
+                            if (owner) {
+                                func = 'addsong';
+                            }
+                            searchResults.append('<li class="media">' +
+                                    '<a class="media-link" onclick = "' + func + '(\'' + entry.id.videoId + '\')">' +
+                                    '<div class="media-left" > <img src="' + entry.snippet.thumbnails.default.url + '" class = "img-circle" alt = "" >' +
+                                    '</div>' +
+                                    '<div class="media-body">' +
+                                    '<h6 class="media-heading">' + entry.snippet.title.asTitle() + '</h6>' +
+                                    '</div>' +
+                                    '</a>' +
+                                    '</li>');
+                        });
+                    }
+                })
+            }
+
+            function request(id) {
+                searchResults.removeClass("well");
+                searchResults.empty();
+                $.get("/api/jukeboxes/" + jukeboxid + "/request?id=" + id, function (data) {
+
+                });
+            }
+
+            function addsong(id) {
+                searchResults.removeClass("well");
+                searchResults.empty();
+                $.get("/api/jukeboxes/" + jukeboxid + "/add?id=" + id, function (data) {
+
+                });
+            }
+        </script>
+
+        <!--Playlist-->
+        <script th:if="${name} == *{owner}">
+
+            var content = $("#playlist-content");
+            var pagination = $('.twbs-default');
+            var currentPage = 0;
+
+
+            //          Search
+            var playlistSearchInput = $("#playlist-search-input");
+            var playlistSearchResult = $("#playlist-search-results");
+            var playlistSearchType = $("#playlist-search-type");
+
+            var resultType;
+
+            playlistSearchInput.keypress(function (event) {
+                if (event.which == 13) {
+                    playlistSearch();
+                }
+            });
+
+            function playlistSearch() {
+                resultType = playlistSearchType.val();
+                var q = encodeURI(playlistSearchInput.val().replace(/[ ]+/gi, "+"));
+                playlistSearchResult.empty();
+                if (resultType == 'playlist') {
+                    $.get("/api/youtube/search?q=" + q + "&type=playlist", searchCallback);
+                } else {
+                    $.get("/api/youtube/searchmusic?q=" + q, searchCallback);
+                }
+            }
+
+            function searchCallback(results) {
+                if (results.items.length != null) {
+                    playlistSearchResult.addClass("well");
+                    results.items.forEach(function (entry) {
+                        var id = entry.id[resultType + 'Id'];
+                        playlistSearchResult.append('<li class="media">' +
+                                '<a class="media-link" onclick = "importItem(\'' + id + '\',\'' + resultType + '\')">' +
+                                '<div class="media-left" > <img src="' + entry.snippet.thumbnails.default.url + '" class = "img-circle" alt = "" >' +
+                                '</div>' +
+                                '<div class="media-body">' +
+                                '<h6 class="media-heading">' + entry.snippet.title.asTitle() + '</h6>' +
+                                '</div>' +
+                                '</a>' +
+                                '</li>');
+                    });
+                }
+            }
+
+            function importItem(id, type) {
+                playlistSearchResult.removeClass("well");
+                playlistSearchResult.empty();
+                $.get("/api/jukeboxes/" + jukeboxid + "/import?id=" + id + "&type=" + type, function (result) {
+                    loadpage(currentPage);
+                });
+            }
+
+            //          /Search
+
+
+            function loadpage(page) {
+                $.get("/api/jukeboxes/" + jukeboxid + "/playlist?sort=title&page=" + page, function (playlist) {
+                    content.empty();
+                    playlist.content.forEach(function (entry) {
+                        content.append(getPlaylistItemHTML(entry));
+                    });
+                    updatePagination(playlist);
+                });
+            }
+
+            function getPlaylistItemHTML(item) {
+                var playlist = "";
+                if (item.playlistTitle != null) {
+                    playlist = item.playlistTitle;
+                }
+                return '<li class="media" style="padding-bottom: 10px;">' +
+                        '<div class="media-left">' +
+                        '<img src="' + item.thumbnails.default.url + '" class="img-circle" alt="">' +
+                        '</div>' +
+                        '<div class="media-body">' +
+                        '<h6 class="media-heading">' + item.title.asTitle() + '</h6>' + playlist +
+                        '<ul class="list-inline mt-5 text-right">' +
+                        '<li><a onclick="addsong(\'' + item.youtubeId + '\')">' + button.addtoqueue + '</a></li>' +
+                        '<li><a onclick="removeFromPlaylist(\'' + item.youtubeId + '\')">' + button.remove + '</a></li>' +
+                        '</ul>' +
+                        '</div>' +
+                        '</li>';
+            }
+
+            function removeFromPlaylist(id) {
+                $.get("/api/jukeboxes/" + jukeboxid + "/playlist/remove?id=" + id, function () {
+                    loadpage(currentPage);
+                })
+            }
+
+            $('.select').select2({
+                minimumResultsForSearch: "-1"
+            });
+
+            function updatePagination(playlist) {
+                pagination.twbsPagination({
+                    totalPages: playlist.totalPages,
+                    visiblePages: 5,
+                    prev: button.previous,
+                    next: button.next,
+                    first: button.first,
+                    last: button.last,
+                    onPageClick: function (event, page) {
+                        currentPage = page - 1;
+                        loadpage(currentPage);
+                    }
+                });
+            }
+            loadpage(0);
+        </script>
+
+
+        <!--Comments-->
+        <script>
+            var commentsContainer = $("#comments-container");
+            var commentsLoadButton = $("#comments-load-button");
+            var commentsTextArea = $("#comment-text-area");
+            var page = 0;
+            var allPages;
+
+            function loadMore() {
+                $.get("/api/jukeboxes/" + jukeboxid + "/comments?page=" + page++ + "&size=5", function (data) {
+                    data.content.forEach(function (item) {
+                        commentsContainer.append(getCommentHTML(item));
+                    });
+                    allPages = data.totalPages;
+                    if (page >= allPages) {
+                        commentsLoadButton.hide();
+                    }
+                });
+            }
+
+            function getCommentHTML(comment) {
+                return '<div class="timeline-row">' +
+                        '<div class="timeline-icon">' +
+                        '<img src="' + comment.thumbnail + '" alt="">' +
+                        '</div>' +
+                        '<div class="panel panel-flat timeline-content">' +
+                        '<div class="panel-heading">' +
+                        '<h6 class="panel-title">' + comment.displayName + '</h6>' +
+                        '<div class="heading-elements">' +
+                        '<span class="heading-text">' + formatTimestamp2(comment.timestamp) + '</span>' +
+                        '</div>' +
+                        '</div>' +
+                        '<div class="panel-body">' + comment.message + '</div>' +
+                        '</div></div>';
+            }
+
+            $('.wysihtml5-min').wysihtml5({
+                "font-styles": false, // Font styling, e.g. h1, h2, etc. Default true
+                "emphasis": true, // Italics, bold, etc. Default true
+                "lists": true, // (Un)ordered lists, e.g. Bullets, Numbers. Default true
+                "html": false, // Button which allows you to edit the generated HTML. Default false
+                "link": true, // Button to insert a link. Default true
+                "image": false, // Button to insert an image. Default true,
+                "action": false, // Undo / Redo buttons,
+                "color": false // Button to change color of font
+            });
+
+            var commentForm = $("#comment-form");
+            commentForm.on('submit', function(e){
+                e.preventDefault();
+                $.ajax({
+                    type: 'POST',
+                    url: "/api/jukeboxes/"+jukeboxid+"/comment",
+                    data: commentForm.serialize(),
+                    success: function(response) {
+//                        console.log(response);
+                        commentsContainer.prepend(getCommentHTML(response));
+                        $("html, body").animate({ scrollTop: 0 }, "slow");
+//                        $("#commentList").append("Name:" + $("#name").val() + "<br/>comment:" + $("#body").val());
+                    },
+                    error: function() {
+                        //$("#commentList").append($("#name").val() + "<br/>" + $("#body").val());
+//                        alert("There was an error submitting comment");
+                    }
+                });
+
+            });
+            commentsContainer.empty();
+            loadMore();
+        </script>
+
+        <script>
+            $(function () {
+                $("body").on("show.bs.tab", "a", function () {
+                    $("li.active").removeClass("active");
+                });
+            });
+        </script>
+
+    </th:block>
